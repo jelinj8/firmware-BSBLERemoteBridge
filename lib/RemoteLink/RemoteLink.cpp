@@ -107,7 +107,14 @@ void handleEvent(WStype_t type, uint8_t* payload, size_t length) {
 
 		case WStype_DISCONNECTED: {
 			connected_ = false;
-			String reason(reinterpret_cast<char*>(payload), length);
+			// payload is NULL for a plain/graceful close (WebSocketsClient::clientDisconnect's
+			// common case - e.g. the peer just closing the TCP connection) and only non-null for
+			// a handshake-rejection reason like "HTTP 401" - constructing a String from a NULL
+			// pointer here leaves its internal buffer NULL too (Arduino-ESP32's String::init()
+			// never allocates one), and String::c_str() on THAT then hands printf's %s a NULL
+			// pointer - newlib's strlen doesn't special-case NULL, so this previously took the
+			// whole firmware down with a Guru Meditation Error on every ordinary disconnect.
+			String reason = (payload != nullptr && length > 0) ? String(reinterpret_cast<char*>(payload), length) : String();
 			if (reason == "HTTP 401") {
 				authRejected_ = true;
 				statusled::setLinkState(statusled::LinkState::kAuthRejected);
@@ -115,7 +122,8 @@ void handleEvent(WStype_t type, uint8_t* payload, size_t length) {
 						"cannot succeed without reconfiguring");
 			} else {
 				statusled::setLinkState(statusled::LinkState::kConnecting);
-				log::ws("disconnected (%s), retrying in %ums", reason.c_str(), backoffMs_);
+				log::ws("disconnected (%s), retrying in %ums", reason.length() > 0 ? reason.c_str() : "connection closed",
+						backoffMs_);
 				backoffMs_ = min(backoffMs_ * 2, kMaxBackoffMs);
 				ws_.setReconnectInterval(backoffMs_);
 			}
@@ -124,7 +132,10 @@ void handleEvent(WStype_t type, uint8_t* payload, size_t length) {
 
 		case WStype_TEXT:
 			if (textHandler_) {
-				textHandler_(String(reinterpret_cast<char*>(payload), length));
+				// Defensive: same NULL-payload hazard as WStype_DISCONNECTED above, even though a
+				// genuine received text frame isn't known to ever hand back a NULL payload.
+				String text = (payload != nullptr && length > 0) ? String(reinterpret_cast<char*>(payload), length) : String();
+				textHandler_(text);
 			}
 			break;
 

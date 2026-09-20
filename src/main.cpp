@@ -1,18 +1,14 @@
 // BSBleRemoteBridge firmware entry point. See doc/PROTOCOL.md for the wire-protocol deltas this
 // firmware adds on top of BSToolbox-BLE's ble-bridge NDJSON protocol, and CLAUDE.md for the
 // project's phased build order and known risks.
-//
-// Bring-up status: Phase 0 (board/LED bring-up) and Phase 1 (WiFi + WebSocket link against the
-// real, already-deployed server) - BLE central command handling (lib/BleCentral, lib/Protocol)
-// lands in later phases; incoming lines are only logged for now, not acted on.
 #include <Arduino.h>
 #include <WiFi.h>
 
 #include "BoardConfig.h"
 #include "Config.h"
 #include "Log.h"
+#include "Protocol.h"
 #include "RemoteLink.h"
-#include "SessionControl.h"
 #include "StatusLed.h"
 
 using namespace blebridge;
@@ -40,21 +36,6 @@ void connectWifi() {
 	statusled::setWifiState(statusled::WifiState::kConnected);
 }
 
-// Placeholder for the real BLE-command dispatch (lib/Protocol, not built yet) - handles only the
-// session-control sentinel so a server-initiated session_reset gets a session_ready ack, and logs
-// everything else as a live protocol analyzer per the original brief.
-void handleIncomingLine(const String& line) {
-	statusled::pulseBleActivity();
-	std::string type = sessioncontrol::typeOf(line.c_str());
-	if (type == sessioncontrol::kSessionReset) {
-		log::ws("session_reset received - no BLE state to tear down yet (Protocol layer not built), "
-				"acking session_ready");
-		remotelink::sendText(sessioncontrol::line(sessioncontrol::kSessionReady).c_str());
-		return;
-	}
-	log::ble("<- %s", line.c_str());
-}
-
 }  // namespace
 
 void setup() {
@@ -74,7 +55,7 @@ void setup() {
 	}
 
 	connectWifi();
-	remotelink::onText(handleIncomingLine);
+	protocol::begin();
 	remotelink::begin(cfg.wsUrl, cfg.channelName, cfg.bearerToken, cfg.tlsInsecure);
 }
 
@@ -86,4 +67,5 @@ void loop() {
 		return;
 	}
 	remotelink::loop();
+	protocol::loop();
 }

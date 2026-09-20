@@ -4,7 +4,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
+#include "BleCentral.h"
 #include "BoardConfig.h"
+#include "BootButton.h"
 #include "Config.h"
 #include "Log.h"
 #include "Protocol.h"
@@ -48,8 +50,8 @@ void setup() {
 	statusled::setWifiState(statusled::WifiState::kNotConfigured);
 
 	cfg = config::load();
-	if (!cfg.hasWifi() || config::bootButtonHeld()) {
-		log::cfg("entering provisioning portal (%s)", cfg.hasWifi() ? "boot button held" : "no WiFi config yet");
+	if (!cfg.hasWifi()) {
+		log::cfg("entering provisioning portal (no WiFi config yet)");
 		statusled::setProvisioning(true);
 		config::runProvisioningPortal();  // never returns - reboots once submitted
 	}
@@ -61,6 +63,19 @@ void setup() {
 
 void loop() {
 	statusled::loop();
+	switch (bootbutton::poll()) {
+		case bootbutton::Event::kLongHold:
+			log::cfg("BOOT button held ~3s - entering provisioning portal");
+			statusled::setProvisioning(true);
+			config::runProvisioningPortal();  // never returns - reboots once submitted
+			break;
+		case bootbutton::Event::kShortPress:
+			log::ble("BOOT button pressed - disconnecting all BLE peripherals");
+			blecentral::disconnectAll();
+			break;
+		case bootbutton::Event::kNone:
+			break;
+	}
 	if (WiFi.status() != WL_CONNECTED) {
 		statusled::setWifiState(statusled::WifiState::kConnecting);
 		connectWifi();

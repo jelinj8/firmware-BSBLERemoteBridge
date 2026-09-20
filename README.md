@@ -43,9 +43,13 @@ pio test -e native                      # host-native protocol-logic unit tests
 
 PlatformIO Core must be >=6.2.0 (see `CLAUDE.md`'s "Known risks"). Real WiFi/server/token config
 can be set at compile time via a gitignored `include/secrets.h` (copy `include/secrets.h.example`)
-for initial dev convenience, but the normal path is the onboard captive-config portal: hold the
-BOOT button (GPIO9) while powering on, connect to the `BLE-Bridge-Setup` WiFi network, and fill in
-the form at `http://192.168.4.1/`.
+for initial dev convenience, but the normal path is the onboard captive-config portal: it opens
+automatically on first boot (no WiFi config yet), or hold the BOOT button for ~3 seconds while the
+board is already running normally to force it open again later. **Do not hold BOOT while
+resetting/powering on** - that's this chip's own UART-download-mode strap combination, not a way
+to reach application code with the button held (see `CLAUDE.md`'s "Known risks"). Once the portal
+is open, connect to the `BLE-Bridge-Setup` WiFi network and fill in the form at
+`http://192.168.4.1/`.
 
 ## Wire protocol
 

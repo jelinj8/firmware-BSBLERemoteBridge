@@ -29,7 +29,7 @@ void handleIncomingLine(const String& line) {
 	if (controlType == sessioncontrol::kSessionReset) {
 		log::ws("session_reset received - resetting all BLE central state");
 		blecentral::resetSession();
-		remotelink::sendText(String(sessioncontrol::line(sessioncontrol::kSessionReady).c_str()));
+		sendAndLogOut(String(sessioncontrol::line(sessioncontrol::kSessionReady).c_str()));
 		return;
 	}
 

@@ -7,6 +7,7 @@
 
 #include "BoardConfig.h"
 #include "Log.h"
+#include "StatusLed.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -72,15 +73,6 @@ void save(const Values& v) {
 	prefs.putString("bearer_token", v.bearerToken);
 	prefs.putBool("tls_insecure", v.tlsInsecure);
 	prefs.end();
-}
-
-bool bootButtonHeld() {
-	if (board::kPinButtonBoot < 0) {
-		return false;
-	}
-	pinMode(board::kPinButtonBoot, INPUT_PULLUP);
-	delay(10);  // let the input settle before sampling
-	return digitalRead(board::kPinButtonBoot) == LOW;
 }
 
 namespace {
@@ -159,6 +151,11 @@ void runProvisioningPortal() {
 	while (!submitted_) {
 		dns.processNextRequest();
 		server.handleClient();
+		// This loop blocks main.cpp's own loop() entirely while the portal is open - without this,
+		// the LED never actually redraws (statusled::setProvisioning(true) only sets a flag; the
+		// real rgbLedWrite() happens in statusled::loop(), which nothing else calls while we're
+		// stuck here), so the purple provisioning indicator would silently never appear.
+		statusled::loop();
 		delay(2);
 	}
 	// Give the "Saved..." response a moment to actually flush to the client before persisting +

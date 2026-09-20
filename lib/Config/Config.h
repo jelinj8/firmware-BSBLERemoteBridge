@@ -6,8 +6,8 @@
 // portal has been used once, and is never re-consulted after a value is persisted.
 //
 // Provisioning (setting these values in the first place) is via a WiFi AP + captive config page -
-// see Config::runProvisioningPortal(), entered when no WiFi config is persisted yet, or when the
-// board's BOOT button is held at power-on (see board::kPinButtonBoot).
+// see Config::runProvisioningPortal(), entered when no WiFi config is persisted yet, or triggered
+// by a long hold of the BOOT button (see lib/BootButton) once already running normally.
 #pragma once
 
 #include <Arduino.h>
@@ -35,15 +35,13 @@ Values load();
 // Persists `values` to NVS; subsequent load() calls return these until changed again.
 void save(const Values& values);
 
-// True if kPinButtonBoot is currently held low (active) - sampled once at boot by main.cpp to
-// decide whether to force entry into the provisioning portal even if WiFi config already exists.
-bool bootButtonHeld();
-
 // Blocks: starts a WiFi AP + a small HTTP form (SSID/password/server URL/channel name/token/TLS-
 // insecure checkbox), waits for a submission, persists it via save(), and returns. Intended to be
 // called from main.cpp's setup() before the normal WiFi-station/WebSocket bring-up when load()
-// returns no WiFi config, or when bootButtonHeld() was true - never re-entered automatically
-// afterwards (a re-flash, a NVS erase, or holding the boot button again are the ways back in).
+// returns no WiFi config, or from main.cpp's loop() when lib/BootButton reports a long hold - never
+// re-entered automatically afterwards (a re-flash, a NVS erase, or holding the boot button again
+// are the ways back in). Keeps the LED updating (calls statusled::loop() itself) despite blocking
+// the rest of the firmware while open.
 void runProvisioningPortal();
 
 }  // namespace config

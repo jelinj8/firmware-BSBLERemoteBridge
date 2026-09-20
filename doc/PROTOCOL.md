@@ -46,19 +46,38 @@ have to be reverse-engineered out of this firmware's source.
 
 ## Onboard LED
 
-One WS2812 pixel; color encodes two independent things — a steady base color+blink cadence for
-WiFi/WebSocket connection state, with a brief flash overlaid on top for every BLE command/
-response/event (always wins over the base state for its ~40ms duration).
+One WS2812 pixel (`lib/StatusLed`); color encodes two independent things — a steady base
+color+blink cadence for WiFi/WebSocket connection state, with a brief flash overlaid on top for
+every BLE command/response/event (always wins over the base state, including over solid red, for
+its short duration - a ~40ms interruption doesn't meaningfully hide a steady/slow-blink base
+state). "Blink" alternates the listed color with off; "fast" is a 4Hz full cycle (125ms half-
+period), "slow" is 1Hz (500ms half-period).
 
-| State | Pattern |
-|---|---|
-| Provisioning / AP mode active | slow purple blink |
-| Boot / WiFi not configured | slow blue blink |
-| WiFi connecting | fast blue blink |
-| WiFi up, WebSocket connecting/reconnecting | fast amber blink |
-| WebSocket connected, idle | solid dim green |
-| Auth rejected (terminal HTTP 401) | solid red |
-| **Overlay:** any BLE command/response/event | brief blue flash |
+| State | RGB (0-255) | Pattern |
+|---|---|---|
+| Provisioning / AP mode active | `(30, 0, 40)` purple | slow blink |
+| Boot / WiFi not configured | `(0, 0, 40)` dim blue | slow blink |
+| WiFi connecting | `(0, 0, 40)` dim blue | fast blink |
+| WiFi up, WebSocket connecting/reconnecting | `(40, 20, 0)` amber | fast blink |
+| WebSocket connected, idle | `(0, 20, 0)` dim green | solid |
+| Auth rejected (terminal HTTP 401) | `(60, 0, 0)` red | solid |
+| **Overlay:** any BLE command/response/event | `(0, 60, 220)` blue | ~40ms flash |
+
+The overlay is wired once, centrally, in `Protocol.cpp` (every incoming command line, outgoing
+response, and drained event - `device_found`/`connected`/`disconnected`/`notification`, plus the
+deferred `scan`/`pair` responses - all pass through the same two functions) rather than at each
+individual `BleCentral` command's call site, so a new command can't forget to trigger it.
+
+## BOOT button (`lib/BootButton`)
+
+Two gestures, both sampled only **while the board is already running normally** - never while
+resetting/powering it on, which instead triggers this chip's UART-download-mode strap (see the
+firmware's own `CLAUDE.md` for why):
+
+- **Short press** (release before ~3s): disconnects every currently-connected BLE peripheral -
+  a physical "let go of everything" control.
+- **Long hold** (~3s or more): re-opens the provisioning portal (see "Config keys" below) even
+  though WiFi/server config already exists.
 
 ## Config keys (NVS, `Preferences` namespace `"blebridge"`)
 

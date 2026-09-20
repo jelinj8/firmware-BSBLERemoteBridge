@@ -98,6 +98,13 @@ pio device monitor -e nanoesp32-c6
 - **nanoESP32-C6 pin mapping** (LED = GPIO8, BOOT/config-portal-force button = GPIO9) is
   confirmed on the real board (LED) or still only from third-party sources (BOOT button) - see
   `include/boards/board_nanoesp32_c6.h`.
+- **GPIO9 (the BOOT button) must never be sampled at boot/reset time.** It's this chip's own
+  UART-download-mode strapping pin - holding it during any kind of chip reset (power-on, EN-pin
+  reset, or a software-triggered one) makes the ROM bootloader stay in download mode instead of
+  ever running this firmware's app code, so a check reached only right after such a reset (an
+  earlier version of this firmware did exactly this, to force re-entry into the provisioning
+  portal) could never actually fire. `Config::consumeForcePortalHold()` samples it only during
+  already-running normal operation (held ~3s), which is safe.
 - **WiFi/BLE radio coexistence**: no problems observed in practice (simultaneous WebSocket +
   active BLE central scan/connect/GATT traffic ran for extended periods without any WiFi drop or
   BLE stall during Phase 1/2 verification), but this hasn't been stress-tested under heavy
@@ -134,8 +141,13 @@ Verified end-to-end on real hardware:
 - `pair` (programmatic bonding, no OS prompt) against a real MeshCore radio requiring a PIN -
   succeeded on the first real attempt.
 
-Not yet built: LED BLE-activity-overlay wiring into `BleCentral`'s actual call sites (the
-`StatusLed` state machine and `pulseBleActivity()` API exist and are exercised from `Protocol`, but
-not yet from every individual `BleCentral` command), CI/release scaffolding (GitHub+Forgejo
-workflows), and the `native` Unity tests have only been confirmed to *build*, never actually *run*
-(no system C++ compiler in this project's dev environment so far).
+The LED BLE-activity overlay (`StatusLed::pulseBleActivity()`) is wired centrally in
+`Protocol.cpp`'s `handleIncomingLine`/`sendAndLogOut`, which every incoming command line, outgoing
+response, and drained event (`device_found`/`connected`/`disconnected`/`notification`, plus the
+deferred `scan`/`pair` responses) all pass through - so it already covers every `BleCentral`
+command without needing a pulse call at each individual call site. See `doc/PROTOCOL.md`'s LED
+table for the exact colors/timings.
+
+Not yet built: CI/release scaffolding (GitHub+Forgejo workflows), and the `native` Unity tests have
+only been confirmed to *build*, never actually *run* (no system C++ compiler in this project's dev
+environment so far).

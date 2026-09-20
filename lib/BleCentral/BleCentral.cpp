@@ -277,6 +277,21 @@ void resetSession() {
 	}
 }
 
+void disconnectAll() {
+	// Snapshot first rather than disconnecting while iterating clients_ directly: onDisconnect
+	// (ClientCallbacks above) erases from that same map, and doing so mid-iteration here would be
+	// asking for trouble regardless of which task it actually fires from.
+	std::vector<NimBLEClient*> connected;
+	for (auto& kv : clients_) {
+		if (kv.second->isConnected()) {
+			connected.push_back(kv.second);
+		}
+	}
+	for (auto* client : connected) {
+		client->disconnect();
+	}
+}
+
 String handleCommand(const String& cmd, const String& id, JsonObjectConst params) {
 	String address = params["address"] | "";
 

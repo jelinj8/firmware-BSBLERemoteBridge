@@ -39,6 +39,12 @@ void pollEvents(EventEmitter emit);
 // for the local ble-bridge sidecar (a fresh process), just as an in-place state reset here instead.
 void resetSession();
 
+// Disconnects every currently-connected peripheral, but - unlike resetSession() - keeps the known-
+// address scan cache and any in-flight scan untouched. The BOOT button's short-press "let go of
+// everything" action (see lib/BootButton): each disconnect fires the normal `disconnected` event
+// via pollEvents, same as any other disconnect.
+void disconnectAll();
+
 // Dispatches one already-parsed command. `cmd` is the command name (e.g. "scan", "connect"),
 // `id` its correlation id, `params` its other fields. Returns the complete serialized JSON
 // response line ready to send as-is, or an empty string if the response will come later via

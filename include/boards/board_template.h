@@ -42,9 +42,11 @@ constexpr bool kPinStatusLedIsAddressable = true;  // TODO; true = WS2812-style,
 
 // ---- Buttons -------------------------------------------------------------------------------------
 //
-// kPinButtonBoot doubles as a "hold at boot to enter config/provisioning mode" input, mirroring the
-// standard ESP32 "boot button also works as a user button once running" pattern - see lib/Config.
-// -1 if this board exposes no such button.
+// kPinButtonBoot is read only once the app is already running (see lib/BootButton) - a long hold
+// forces the config/provisioning portal open, a short press disconnects all BLE peripherals. If
+// this pin doubles as a boot-mode/download-mode strapping pin on your chip (as it does on the
+// ESP32 family generally), it must NEVER be sampled at boot/reset time - see lib/BootButton's own
+// doc comment for why. -1 if this board exposes no such button.
 
 constexpr int kPinButtonBoot = -1;  // TODO
 

@@ -118,6 +118,73 @@ pio device monitor -e nanoesp32-c6
   `WStype_TEXT` handlers. If a similar crash reoccurs (`MEPC` decodes to `strlen`, `RA` to
   `_svfprintf_r` via `riscv32-esp-elf-addr2line` against `tool-esp-rom-elfs`' ROM ELF), suspect a
   NULL `%s` argument the same way.
+- **Long Phomemo `d-series` prints (PTLabelPrint, `DSeriesPrinter`) silently failed through this
+  bridge past roughly 28-40mm - root cause found and fixed, 2026-09-20 (full investigation,
+  several real bugs found and fixed along the way, until this bridge's working length matched a
+  real OS BLE stack's own ~80mm ceiling exactly).** The fixes below (each a genuine, separate bug,
+  not just one thing) in the order they were found:
+  - `NimBLERemoteValueAttribute::writeValue()` only takes the plain ATT "Write Command" path
+    (`ble_gattc_write_no_rsp_flat`, a single unacknowledged packet) when the payload fits within
+    the connection's negotiated MTU minus 3 bytes; anything larger silently falls through to
+    `ble_gattc_write_long` - an ATT prepare-write/execute-write sequence - **regardless of the
+    caller's `with_response=false`**. A real OS BLE stack negotiates a large enough MTU that
+    PTLabelPrint's fixed 128-byte chunks never hit this; this NimBLE central isn't guaranteed to.
+    Fixed in `writeRespectingMtu()` (`BleCentral.cpp`, shared by `write`/`write_stream`): a
+    `with_response=false` write now fragments to `client->getMTU() - 3` itself, every fragment a
+    genuine ATT Write Command, never letting `writeValue()` silently swap protocols underneath it.
+  - Every command/response/event line was logged in full, hex payload and all - at 115200 baud
+    that's ~55-60ms of *blocking* Serial time per write chunk alone, scaling directly with job
+    length. Log.h's own doc comment already described an INFO/VERBOSE split for exactly this
+    reason, but nothing actually implemented it. Fixed in `Protocol.cpp`'s `compactForLog()| -
+    payload hex is compacted to a byte count at the default INFO level (VERBOSE still gets the
+    full raw line); the full line is still always what's actually sent over the wire.
+  - Added a `write_stream` command (`{"cmd":"write_stream",...,"value_hex":<whole payload>,
+    "chunk_size":128,"chunk_delay_ms":20}`, see `BlePeripheral.writeCharacteristicStream`'s doc in
+    BSToolbox-BLE) so a one-way, ack-free protocol like this one pays one WebSocket round trip for
+    the *entire* transfer instead of one per chunk - measured 601ms for a 40mm/3840-byte print,
+    down from 2.2-3.2s of per-chunk round trips. Deliberately *not* built by pipelining repeated
+    `write` commands without waiting for each response: `ble-bridge/src/main.rs`'s command loop
+    spawns each incoming line as an independent concurrent task with no ordering guarantee between
+    them, so pipelined writes could reach the peripheral out of order and corrupt the raster stream
+    - `write_stream` keeps the whole chunk-by-chunk sequence inside one command's own sequential
+    handling instead, on both the Rust sidecar and this firmware.
+  - Also requests a tight BLE connection interval on every connect (`updateConnParams(6,12,0,400)`
+    - NimBLE's own default measured 50ms against a real peripheral, dropped to 15ms once requested)
+    and bumped NimBLE's internal `msys_1` mbuf pool 4x (`CONFIG_BT_NIMBLE_MSYS1_BLOCK_COUNT`,
+    `platformio.ini`'s `build_flags`) - both worth keeping as general link-quality improvements, but
+    neither turned out to be the actual remaining cause below (confirmed by testing each in
+    isolation - the failure point didn't move either time).
+  - **The actual remaining cause, found after `write_stream` moved the symptom from "silently
+    doesn't print" to "the whole bridge hangs - nothing responds, not even WiFi/WebSocket - until a
+    hard restart"**: `links2004/WebSockets` (`RemoteLink.cpp`'s `ws_`) does **not** reassemble a
+    fragmented WebSocket TEXT message into one final `WStype_TEXT` event - each fragment arrives as
+    its own event (`WStype_FRAGMENT_TEXT_START`/`WStype_FRAGMENT`/`WStype_FRAGMENT_FIN`, see
+    `WebSocketsClient::messageReceived`), carrying only that fragment's own payload; the caller is
+    responsible for concatenating them itself. `handleEvent` had no case for any of these three -
+    they fell through to `default: break` and were silently dropped, one piece at a time, while the
+    underlying WebSocket/TCP connection stayed perfectly healthy throughout (confirmed on real
+    hardware: heartbeat pings/pongs kept flowing normally during a "hang" - the connection was never
+    actually stuck, the *message* just vanished before ever reaching `handleIncomingLine`).
+    `write_stream`'s whole-payload-in-one-command design (itself a correct fix for the *separate*,
+    earlier per-chunk-round-trip-latency bug - see above) sends one message far bigger than any
+    individual per-chunk write ever was; once a message crosses whatever fragmentation threshold the
+    *sending* WebSocket client uses, it arrives here in pieces that this bridge was silently eating.
+    A short enough label's `write_stream` command stays under that threshold and arrives as a single
+    `WStype_TEXT` event (works even before this fix); a longer one doesn't. Fixed by accumulating
+    `WStype_FRAGMENT_TEXT_START`/`WStype_FRAGMENT` into a buffer and treating `WStype_FRAGMENT_FIN`
+    like a completed `WStype_TEXT` event, once the whole message is reassembled.
+
+  **Verified end-to-end on real hardware**: 50mm and 80mm Phomemo prints through this bridge both
+  now print correctly (previously: silent failure/hang from roughly 28-40mm on). 80mm is also this
+  bridge's practical ceiling now - matching, not falling short of, what a real OS BLE stack (local
+  or PC-hosted-remote) already tops out at for the same printer, confirming that remaining limit is
+  the Q30/Phomemo `d-series` protocol's own, unrelated to this bridge.
+
+  **`write_stream`'s whole-transfer blocking call still has no timeout** - a genuine stall inside it
+  (not the fragment-drop bug above, which is now fixed, but some *other* future problem) would still
+  hang the entire bridge same as before. Worth adding a bounded deadline around it at some point, but
+  deliberately not done blindly here now that the actual cause of the hangs seen during this
+  investigation is understood and fixed.
 - **`pair`'s wire shape** (`{"cmd":"pair","id":...,"address":...,"pin":...}`) was defined fresh for
   this firmware, with no Rust-sidecar or Java-side counterpart yet (see BSToolbox-BLE's CLAUDE.md,
   "Planned: programmatic pairing") - worth a short confirmation pass with that repo's maintainer
@@ -140,6 +207,9 @@ Verified end-to-end on real hardware:
   "CrowPanel-3851DC").
 - `pair` (programmatic bonding, no OS prompt) against a real MeshCore radio requiring a PIN -
   succeeded on the first real attempt.
+- Long Phomemo `d-series` label prints (PTLabelPrint, via `write_stream`) against a real Phomemo
+  Q30, up to 80mm - see "Known risks" above for the investigation that got this working (was
+  silently failing/hanging from ~28-40mm on before the fixes described there).
 
 The LED BLE-activity overlay (`StatusLed::pulseBleActivity()`) is wired centrally in
 `Protocol.cpp`'s `handleIncomingLine`/`sendAndLogOut`, which every incoming command line, outgoing

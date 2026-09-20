@@ -57,6 +57,9 @@ WebSocketsClient ws_;
 TextHandler textHandler_;
 bool connected_ = false;
 bool authRejected_ = false;
+// Accumulates a fragmented incoming TEXT message across WStype_FRAGMENT_TEXT_START/FRAGMENT/
+// FRAGMENT_FIN - see handleEvent's own comment on why this exists at all.
+String fragmentBuffer_;
 uint32_t backoffMs_ = kInitialBackoffMs;
 
 struct ParsedUrl {
@@ -137,6 +140,35 @@ void handleEvent(WStype_t type, uint8_t* payload, size_t length) {
 				String text = (payload != nullptr && length > 0) ? String(reinterpret_cast<char*>(payload), length) : String();
 				textHandler_(text);
 			}
+			break;
+
+		// This library does NOT reassemble a fragmented TEXT message into one final WStype_TEXT
+		// event - each fragment arrives as its own event, carrying only that fragment's own
+		// payload (see WebSocketsClient::messageReceived), and the caller is responsible for
+		// concatenating them. A message large enough to cross the sending WebSocket client's own
+		// fragmentation threshold (e.g. a write_stream command carrying a long raster payload)
+		// would otherwise arrive here in pieces with no case to handle them, and be silently lost.
+		case WStype_FRAGMENT_TEXT_START:
+			fragmentBuffer_ = "";
+			if (payload != nullptr && length > 0) {
+				fragmentBuffer_ += String(reinterpret_cast<char*>(payload), length);
+			}
+			break;
+
+		case WStype_FRAGMENT:
+			if (payload != nullptr && length > 0) {
+				fragmentBuffer_ += String(reinterpret_cast<char*>(payload), length);
+			}
+			break;
+
+		case WStype_FRAGMENT_FIN:
+			if (payload != nullptr && length > 0) {
+				fragmentBuffer_ += String(reinterpret_cast<char*>(payload), length);
+			}
+			if (textHandler_) {
+				textHandler_(fragmentBuffer_);
+			}
+			fragmentBuffer_ = "";
 			break;
 
 		case WStype_PING:

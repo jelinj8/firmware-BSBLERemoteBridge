@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#include <algorithm>
 #include <map>
 #include <vector>
 
@@ -141,6 +142,32 @@ NimBLEClient* clientFor(const String& address) {
 		return nullptr;
 	}
 	return it->second;
+}
+
+// Shared by "write" and "write_stream": NimBLERemoteValueAttribute::writeValue only takes the
+// plain ATT "Write Command" path (a single ble_gattc_write_no_rsp_flat call) when the payload
+// fits in this connection's negotiated MTU; anything larger silently falls through to
+// ble_gattc_write_long instead - an ATT prepare-write/execute-write sequence - *regardless* of
+// withResponse being false. That's a different wire protocol than a real "write without
+// response", and one most simple peripherals' write-without-response characteristics (this
+// firmware's own target devices among them - see doc/PROTOCOL.md) don't implement correctly, or
+// handle with much higher per-write overhead. A caller's chunk size is chosen without knowing
+// this link's real negotiated MTU, so fragment here to the real ceiling instead of ever taking
+// that fallback - every fragment stays a genuine ATT Write Command.
+bool writeRespectingMtu(NimBLEClient* client, NimBLERemoteCharacteristic* ch, const uint8_t* data, size_t len,
+		bool withResponse) {
+	if (withResponse || len == 0) {
+		return ch->writeValue(data, len, withResponse);
+	}
+	uint16_t mtu = client->getMTU();
+	size_t maxChunk = mtu > 3 ? static_cast<size_t>(mtu) - 3 : 20;
+	for (size_t offset = 0; offset < len; offset += maxChunk) {
+		size_t chunkLen = std::min(maxChunk, len - offset);
+		if (!ch->writeValue(data + offset, chunkLen, false)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 NimBLERemoteCharacteristic* findCharacteristic(NimBLEClient* client, const String& serviceUuid, const String& charUuid,
@@ -334,6 +361,14 @@ String handleCommand(const String& cmd, const String& id, JsonObjectConst params
 			return errResponse(id, "connect failed");
 		}
 		clients_[key] = client;
+		// NimBLE's default connection interval (measured 50ms against a real peripheral) is far
+		// looser than what real OS BLE stacks commonly negotiate unprompted (~15ms or less) -
+		// request the same tight interval `main.rs`'s `request_connection_parameters
+		// "throughput_optimized"` preset uses, for every connection, for the lower latency and
+		// link headroom.
+		client->updateConnParams(6, 12, 0, 400);
+		log::ble("connect: interval=%ums mtu=%u", static_cast<unsigned>(client->getConnInfo().getConnInterval()) * 5 / 4,
+				static_cast<unsigned>(client->getMTU()));
 		return okResponse(id);
 	}
 
@@ -423,7 +458,55 @@ String handleCommand(const String& cmd, const String& id, JsonObjectConst params
 			return errResponse(id, err);
 		}
 		auto bytes = hexcodec::decode(hexStd);
-		bool ok = ch->writeValue(bytes.data(), bytes.size(), withResponse);
+		bool ok = writeRespectingMtu(client, ch, bytes.data(), bytes.size(), withResponse);
+		return ok ? okResponse(id) : errResponse(id, "write failed");
+	}
+
+	if (cmd == "write_stream") {
+		NimBLEClient* client = clientFor(address);
+		if (client == nullptr) {
+			return errResponse(id, "not connected: " + address);
+		}
+		String serviceUuid = params["service_uuid"] | "";
+		String charUuid = params["char_uuid"] | "";
+		String valueHex = params["value_hex"] | "";
+		bool withResponse = params["with_response"] | false;
+		size_t chunkSize = params["chunk_size"] | 128;
+		uint32_t chunkDelayMs = params["chunk_delay_ms"] | 0;
+		if (chunkSize == 0) {
+			chunkSize = 128;
+		}
+
+		std::string hexStd(valueHex.c_str());
+		if (hexStd.length() % 2 != 0) {
+			return errResponse(id, "odd-length hex string");
+		}
+		for (char c : hexStd) {
+			if (hexcodec::digit(c) < 0) {
+				return errResponse(id, "invalid hex digit");
+			}
+		}
+		String err;
+		NimBLERemoteCharacteristic* ch = findCharacteristic(client, serviceUuid, charUuid, err);
+		if (ch == nullptr) {
+			return errResponse(id, err);
+		}
+		// Splits into chunkSize-byte pieces and writes each in turn, sleeping chunkDelayMs between
+		// writes - all within this one command's handling (a plain sequential loop, no
+		// concurrency), so a caller pays one round trip for the whole transfer instead of one per
+		// chunk (see BlePeripheral.writeCharacteristicStream's doc for why that matters over a
+		// higher-latency link). delay() yields to the WiFi/BLE FreeRTOS tasks (unlike a busy-wait),
+		// so blocking the main loop for one command's duration is safe as long as the transfer
+		// stays well under this firmware's WebSocket heartbeat tolerance.
+		auto bytes = hexcodec::decode(hexStd);
+		bool ok = true;
+		for (size_t offset = 0; offset < bytes.size() && ok; offset += chunkSize) {
+			if (offset > 0 && chunkDelayMs > 0) {
+				delay(chunkDelayMs);
+			}
+			size_t len = std::min(chunkSize, bytes.size() - offset);
+			ok = writeRespectingMtu(client, ch, bytes.data() + offset, len, withResponse);
+		}
 		return ok ? okResponse(id) : errResponse(id, "write failed");
 	}
 

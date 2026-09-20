@@ -13,9 +13,32 @@ namespace protocol {
 
 namespace {
 
+// Logging a full hex payload on every command/response/event line costs real, blocking Serial
+// time at 115200 baud, scaling directly with job length - Log.h's own doc comment describes an
+// INFO/VERBOSE split for exactly this reason. This compacts the payload to a byte count at the
+// default INFO level (VERBOSE still gets the full raw line, for protocol-mismatch debugging) -
+// the full line is always still what's actually sent over the wire, only the *logged* copy is
+// shortened.
+String compactForLog(const String& line) {
+	if (log::currentLevel >= log::Level::kVerbose) {
+		return line;
+	}
+	int key = line.indexOf("\"value_hex\":\"");
+	if (key < 0) {
+		return line;
+	}
+	int valueStart = key + 13;  // length of "\"value_hex\":\""
+	int valueEnd = line.indexOf('"', valueStart);
+	if (valueEnd < 0) {
+		return line;
+	}
+	String placeholder = "<" + String((valueEnd - valueStart) / 2) + " bytes>";
+	return line.substring(0, valueStart) + placeholder + line.substring(valueEnd);
+}
+
 void sendAndLogOut(const String& line) {
 	statusled::pulseBleActivity();
-	log::ble("-> %s", line.c_str());
+	log::ble("-> %s", compactForLog(line).c_str());
 	remotelink::sendText(line);
 }
 
@@ -33,7 +56,7 @@ void handleIncomingLine(const String& line) {
 		return;
 	}
 
-	log::ble("<- %s", line.c_str());
+	log::ble("<- %s", compactForLog(line).c_str());
 
 	JsonDocument doc;
 	DeserializationError parseError = deserializeJson(doc, line);

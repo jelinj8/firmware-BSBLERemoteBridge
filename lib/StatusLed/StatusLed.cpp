@@ -26,7 +26,10 @@ constexpr Color kPurple{30, 0, 40};
 constexpr Color kAmber{40, 20, 0};
 constexpr Color kGreen{0, 20, 0};
 constexpr Color kRed{60, 0, 0};
-constexpr Color kWhite{255, 255, 255};
+// Deliberately brighter/more saturated than the dim kBlue base-state color (so a pulse is still
+// noticeable over a "WiFi connecting" blink) but not full-intensity white - too harsh/bright for
+// something that flashes on every single BLE command/response/event.
+constexpr Color kBleActivity{0, 60, 220};
 
 void write(const Color& c) {
 	rgbLedWrite(pin_, c.r, c.g, c.b);
@@ -70,7 +73,7 @@ void loop() {
 
 	if (blePulseActive_) {
 		if (millis() - blePulseStartedAt_ < kBleActivityPulseMs) {
-			write(kWhite);
+			write(kBleActivity);
 			return;
 		}
 		blePulseActive_ = false;

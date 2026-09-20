@@ -122,6 +122,21 @@ pio device monitor -e nanoesp32-c6
   the default open() sequence is what asserts them); if a session already landed in download mode,
   a plain RTS pulse with DTR held low (the same "hard reset via RTS pin" esptool itself performs
   after flashing) brings it back to a normal boot without needing to power-cycle.
+- **Captive-portal auto-detection landing on the wrong page is a client-side (OS/browser) quirk,
+  not a server bug - confirmed 2026-09-20.** `Config.cpp`'s `redirectToRoot` (302 to the AP's own
+  IP for any unmatched path, including every OS's connectivity-check probe domain) is verified
+  correct: manually navigating to the portal's IP always loads the form. But on Windows with
+  Firefox as the default browser, the "sign in to network" notification's own auto-opened tab has
+  still been observed landing on Firefox's default new-tab content (e.g. an msn.com top-site tile)
+  instead - Windows' own NCSI is what actually detects the captive portal on Windows (not
+  Firefox's independent `detectportal.firefox.com` canary), and the OS-to-default-browser handoff
+  when the notification is clicked doesn't appear to carry the detected portal URL through to
+  Firefox, which then just opens its own default new tab. Not something this firmware can control
+  - different OS/browser combinations are known to implement captive-portal auto-detection
+  inconsistently in general. The portal is always reachable by navigating to the reported IP
+  directly (shown both in the serial log and, once the redirect fires, in whichever browser *did*
+  navigate correctly) - that's the fallback to give a user if auto-detection ever picks the wrong
+  page.
 - **WiFi/BLE radio coexistence**: no problems observed in practice (simultaneous WebSocket +
   active BLE central scan/connect/GATT traffic ran for extended periods without any WiFi drop or
   BLE stall during Phase 1/2 verification), but this hasn't been stress-tested under heavy

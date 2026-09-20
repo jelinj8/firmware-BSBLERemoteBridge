@@ -1,0 +1,174 @@
+#include "Config.h"
+
+#include <DNSServer.h>
+#include <Preferences.h>
+#include <WebServer.h>
+#include <WiFi.h>
+
+#include "BoardConfig.h"
+#include "Log.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#define BLEBRIDGE_HAS_SECRETS 1
+#else
+#define BLEBRIDGE_HAS_SECRETS 0
+#endif
+
+namespace blebridge {
+namespace config {
+
+namespace {
+constexpr const char* kNamespace = "blebridge";
+constexpr int kDnsPort = 53;
+}  // namespace
+
+Values load() {
+	Values v;
+	Preferences prefs;
+	prefs.begin(kNamespace, true);
+	v.wifiSsid = prefs.getString("wifi_ssid", "");
+	v.wifiPassword = prefs.getString("wifi_pass", "");
+	v.wsUrl = prefs.getString("ws_url", "");
+	v.channelName = prefs.getString("channel_name", "");
+	v.bearerToken = prefs.getString("bearer_token", "");
+	bool hasTlsKey = prefs.isKey("tls_insecure");
+	v.tlsInsecure = prefs.getBool("tls_insecure", false);
+	prefs.end();
+
+#if BLEBRIDGE_HAS_SECRETS
+	// Compile-time fallback for any field never persisted yet - see secrets.h.example. Checked
+	// independently per field (not all-or-nothing) so a partially-provisioned device still gets
+	// sane defaults for whatever hasn't been set via the portal yet.
+	if (v.wifiSsid.length() == 0) {
+		v.wifiSsid = kWifiSsid;
+	}
+	if (v.wifiPassword.length() == 0) {
+		v.wifiPassword = kWifiPassword;
+	}
+	if (v.wsUrl.length() == 0) {
+		v.wsUrl = kWsUrl;
+	}
+	if (v.channelName.length() == 0) {
+		v.channelName = kChannelName;
+	}
+	if (v.bearerToken.length() == 0) {
+		v.bearerToken = kBearerToken;
+	}
+	if (!hasTlsKey) {
+		v.tlsInsecure = kTlsInsecure;
+	}
+#endif
+	return v;
+}
+
+void save(const Values& v) {
+	Preferences prefs;
+	prefs.begin(kNamespace, false);
+	prefs.putString("wifi_ssid", v.wifiSsid);
+	prefs.putString("wifi_pass", v.wifiPassword);
+	prefs.putString("ws_url", v.wsUrl);
+	prefs.putString("channel_name", v.channelName);
+	prefs.putString("bearer_token", v.bearerToken);
+	prefs.putBool("tls_insecure", v.tlsInsecure);
+	prefs.end();
+}
+
+bool bootButtonHeld() {
+	if (board::kPinButtonBoot < 0) {
+		return false;
+	}
+	pinMode(board::kPinButtonBoot, INPUT_PULLUP);
+	delay(10);  // let the input settle before sampling
+	return digitalRead(board::kPinButtonBoot) == LOW;
+}
+
+namespace {
+
+WebServer* server_ = nullptr;
+bool submitted_ = false;
+Values pending_;
+
+String htmlEscape(const String& in) {
+	String out = in;
+	out.replace("&", "&amp;");
+	out.replace("\"", "&quot;");
+	out.replace("<", "&lt;");
+	out.replace(">", "&gt;");
+	return out;
+}
+
+void handleRoot() {
+	Values current = load();
+	String page =
+			"<!DOCTYPE html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+			"<title>BLE Bridge setup</title></head><body>"
+			"<h1>BLE Bridge setup</h1><form method=POST action='/save'>"
+			"<label>WiFi SSID<br><input name=wifi_ssid value='" +
+			htmlEscape(current.wifiSsid) +
+			"'></label><br>"
+			"<label>WiFi password (leave blank to keep current)<br><input name=wifi_pass type=password></label><br>"
+			"<label>WebSocket URL<br><input name=ws_url value='" +
+			htmlEscape(current.wsUrl) +
+			"' size=48></label><br>"
+			"<label>Channel name<br><input name=channel_name value='" +
+			htmlEscape(current.channelName) +
+			"'></label><br>"
+			"<label>Bearer token (leave blank to keep current)<br><input name=bearer_token type=password></label><br>"
+			"<label><input type=checkbox name=tls_insecure value=1" +
+			String(current.tlsInsecure ? " checked" : "") +
+			"> Skip TLS certificate verification (local network only)</label><br><br>"
+			"<button type=submit>Save &amp; reboot</button></form></body></html>";
+	server_->send(200, "text/html", page);
+}
+
+void handleSave() {
+	Values existing = load();
+	pending_.wifiSsid = server_->arg("wifi_ssid");
+	String pass = server_->arg("wifi_pass");
+	pending_.wifiPassword = pass.length() > 0 ? pass : existing.wifiPassword;
+	pending_.wsUrl = server_->arg("ws_url");
+	pending_.channelName = server_->arg("channel_name");
+	String token = server_->arg("bearer_token");
+	pending_.bearerToken = token.length() > 0 ? token : existing.bearerToken;
+	pending_.tlsInsecure = server_->hasArg("tls_insecure");
+	server_->send(200, "text/html", "<html><body><h1>Saved. Rebooting...</h1></body></html>");
+	submitted_ = true;
+}
+
+}  // namespace
+
+void runProvisioningPortal() {
+	const char* apSsid = "BLE-Bridge-Setup";
+	WiFi.mode(WIFI_AP);
+	WiFi.softAP(apSsid);
+	IPAddress apIp = WiFi.softAPIP();
+	log::cfg("provisioning portal up: connect to WiFi '%s' and open http://%s/", apSsid, apIp.toString().c_str());
+
+	DNSServer dns;
+	dns.start(kDnsPort, "*", apIp);  // answers every hostname with our own IP, for captive-portal auto-popup
+
+	WebServer server(80);
+	server_ = &server;
+	submitted_ = false;
+	server.on("/", handleRoot);
+	server.on("/save", HTTP_POST, handleSave);
+	server.onNotFound(handleRoot);  // captive-portal detection probes land on the form too
+	server.begin();
+
+	while (!submitted_) {
+		dns.processNextRequest();
+		server.handleClient();
+		delay(2);
+	}
+	// Give the "Saved..." response a moment to actually flush to the client before persisting +
+	// rebooting out from under the connection.
+	delay(500);
+	save(pending_);
+	server.stop();
+	dns.stop();
+	ESP.restart();
+}
+
+}  // namespace config
+}  // namespace blebridge

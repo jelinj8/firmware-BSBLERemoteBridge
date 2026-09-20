@@ -114,6 +114,22 @@ void handleRoot() {
 	server_->send(200, "text/html", page);
 }
 
+// Every OS's captive-portal detector probes a known connectivity-check URL on its own real
+// domain (Windows: www.msftconnecttest.com; Android: connectivitycheck.gstatic.com; Apple:
+// captive.apple.com) expecting a specific fixed response - our DNS hijack (dns.start(..., "*",
+// apIp) below) sends all of those here instead of the real internet. Serving the portal page's
+// actual content directly for those paths (as onNotFound used to) still shows correctly, but the
+// OS's embedded captive-portal browser keeps the original probe URL in its address bar - since
+// that's a real Microsoft/Google/Apple domain rather than this device's own IP, that's a
+// legitimate point of confusion, and doesn't match Windows's own documented NCSI flow, which
+// expects a redirect. Redirecting every non-root request to "/" makes the embedded browser
+// actually navigate there, landing on this device's own IP in the address bar, matching that.
+void redirectToRoot() {
+	IPAddress apIp = WiFi.softAPIP();
+	server_->sendHeader("Location", "http://" + apIp.toString() + "/", true);
+	server_->send(302, "text/plain", "");
+}
+
 void handleSave() {
 	Values existing = load();
 	pending_.wifiSsid = server_->arg("wifi_ssid");
@@ -145,7 +161,7 @@ void runProvisioningPortal() {
 	submitted_ = false;
 	server.on("/", handleRoot);
 	server.on("/save", HTTP_POST, handleSave);
-	server.onNotFound(handleRoot);  // captive-portal detection probes land on the form too
+	server.onNotFound(redirectToRoot);  // captive-portal detection probes get redirected to "/"
 	server.begin();
 
 	while (!submitted_) {

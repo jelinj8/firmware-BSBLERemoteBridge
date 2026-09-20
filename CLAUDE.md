@@ -105,6 +105,23 @@ pio device monitor -e nanoesp32-c6
   earlier version of this firmware did exactly this, to force re-entry into the provisioning
   portal) could never actually fire. `Config::consumeForcePortalHold()` samples it only during
   already-running normal operation (held ~3s), which is safe.
+- **Simply opening a serial connection to COM12 can itself reset the board into the ROM's
+  download-mode bootloader** (`rst:0x1 (POWERON),boot:0x4 (DOWNLOAD(USB/UART0/SDIO_FEI_FEO))`,
+  "waiting for download") instead of running this firmware - not a firmware bug, and not
+  preventable in firmware at all: this board's CH343 USB-serial chip has the same auto-reset
+  circuit `esptool` relies on to enter download mode without a manual BOOT press, wiring the
+  serial port's DTR/RTS lines to EN/GPIO9 - some terminal programs and libraries assert/toggle
+  DTR and RTS on open in a sequence that happens to pull GPIO9 low during the reset pulse, and
+  GPIO9 is sampled by the boot ROM itself before any of this firmware's code ever runs (same
+  strapping-pin fact as the BOOT-button note above, triggered a different way). Confirmed
+  reproducible just by opening a plain serial monitor. Not harmful or destructive - the board
+  isn't bricked, it's sitting in the ROM's own "waiting for download" state - but the firmware
+  isn't running until it's reset again correctly. Workaround confirmed to open a connection
+  without tripping this: explicitly hold both DTR and RTS low *before* opening the port (e.g. in
+  Python/pyserial, set `ser.dtr = False; ser.rts = False` before calling `ser.open()`, not after -
+  the default open() sequence is what asserts them); if a session already landed in download mode,
+  a plain RTS pulse with DTR held low (the same "hard reset via RTS pin" esptool itself performs
+  after flashing) brings it back to a normal boot without needing to power-cycle.
 - **WiFi/BLE radio coexistence**: no problems observed in practice (simultaneous WebSocket +
   active BLE central scan/connect/GATT traffic ran for extended periods without any WiFi drop or
   BLE stall during Phase 1/2 verification), but this hasn't been stress-tested under heavy

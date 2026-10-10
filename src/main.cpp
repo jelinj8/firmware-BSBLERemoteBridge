@@ -19,19 +19,48 @@ namespace {
 
 config::Values cfg;
 
+// A fresh WiFi.begin() after this long without a connection. Arduino-ESP32 (3.3) retries on its own
+// only once after a failure, then only for the disconnect reasons it deems transient - after e.g.
+// AUTH_FAIL (an AP that briefly rejects while restarting) it never tries again, and a single
+// begin() then waits forever: a bridge that had run for a long time was found stuck that way
+// (fast blue, never reconnecting until power-cycled).
+constexpr uint32_t kWifiRetryMs = 30000;
+// Last resort: reboot after this long without WiFi, in case the stack itself is wedged.
+constexpr uint32_t kWifiRestartMs = 10UL * 60UL * 1000UL;
+
+void beginWifi() {
+	WiFi.mode(WIFI_STA);
+	WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
+}
+
 void connectWifi() {
 	statusled::setWifiState(statusled::WifiState::kConnecting);
 	log::wifi("connecting to '%s'...", cfg.wifiSsid.c_str());
-	WiFi.mode(WIFI_STA);
-	WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
+	beginWifi();
 
-	uint32_t start = millis();
+	const uint32_t start = millis();
+	uint32_t attemptStart = start;
 	while (WiFi.status() != WL_CONNECTED) {
 		statusled::loop();
+		// Still honoured while WiFi is down - the portal is how changed WiFi credentials get fixed.
+		if (bootbutton::poll() == bootbutton::Event::kLongHold) {
+			log::cfg("BOOT button held ~3s - entering provisioning portal");
+			statusled::setProvisioning(true);
+			config::runProvisioningPortal();  // never returns - reboots once submitted
+		}
 		delay(10);
-		if (millis() - start > 20000) {
-			log::wifi("still connecting after 20s (status=%d)...", WiFi.status());
-			start = millis();
+		if (millis() - start > kWifiRestartMs) {
+			log::wifi("no connection for %lus (status=%d) - restarting", (unsigned long)(kWifiRestartMs / 1000),
+					  WiFi.status());
+			delay(100);
+			ESP.restart();
+		}
+		if (millis() - attemptStart > kWifiRetryMs) {
+			log::wifi("not connected after %lus (status=%d) - starting a new attempt",
+					  (unsigned long)(kWifiRetryMs / 1000), WiFi.status());
+			WiFi.disconnect();
+			beginWifi();
+			attemptStart = millis();
 		}
 	}
 	log::wifi("connected, IP=%s", WiFi.localIP().toString().c_str());

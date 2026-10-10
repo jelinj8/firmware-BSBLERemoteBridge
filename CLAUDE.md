@@ -141,6 +141,17 @@ pio device monitor -e nanoesp32-c6
   active BLE central scan/connect/GATT traffic ran for extended periods without any WiFi drop or
   BLE stall during Phase 1/2 verification), but this hasn't been stress-tested under heavy
   simultaneous load on both radios.
+- **WiFi reconnect could stall forever (seen 2026-10-10, fixed in `src/main.cpp`'s `connectWifi()`,
+  not yet flashed/verified on the deployed bridge)**: after running for a long time the bridge was
+  found blinking fast blue (WiFi connecting) and never came back until power-cycled. `connectWifi()`
+  called `WiFi.begin()` once and waited for `WL_CONNECTED` indefinitely, while Arduino-ESP32 3.3's
+  own STA auto-reconnect retries once and then only for the disconnect reasons its
+  `_is_staReconnectableReason` lists - not e.g. `AUTH_FAIL` (202), which an AP can send briefly
+  while restarting. The actual disconnect reason wasn't captured (no serial attached), so that is
+  the likely mechanism, not a confirmed one. Now: a fresh `disconnect()`+`begin()` every 30s, a
+  reboot after 10 minutes without WiFi, and the BOOT long-hold (provisioning portal) is polled
+  inside that wait too - before, it was unreachable while WiFi was down, so changed WiFi
+  credentials could only be fixed by reflashing.
 - **A real crash was found and fixed during Phase 2 verification**: `WebSocketsClient` delivers a
   NULL `payload` for a plain/graceful WebSocket disconnect (not just handshake rejections), and
   Arduino-ESP32's `String` never allocates a buffer for a NULL-constructed string, so

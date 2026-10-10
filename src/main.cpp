@@ -9,6 +9,7 @@
 #include "BootButton.h"
 #include "Config.h"
 #include "Log.h"
+#include "Ota.h"
 #include "Protocol.h"
 #include "RemoteLink.h"
 #include "StatusLed.h"
@@ -29,6 +30,8 @@ constexpr uint32_t kWifiRetryMs = 30000;
 constexpr uint32_t kWifiRestartMs = 10UL * 60UL * 1000UL;
 
 void beginWifi() {
+	// Before mode()/begin(), or DHCP goes out under the framework's default "esp32c6-XXXXXX".
+	WiFi.setHostname(config::hostName(cfg.effectiveDeviceName()).c_str());
 	WiFi.mode(WIFI_STA);
 	WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
 }
@@ -86,7 +89,8 @@ void setup() {
 	}
 
 	connectWifi();
-	protocol::begin();
+	ota::begin(cfg.effectiveDeviceName());
+	protocol::begin(cfg.effectiveDeviceName());
 	remotelink::begin(cfg.wsUrl, cfg.channelName, cfg.bearerToken, cfg.tlsInsecure);
 }
 
@@ -110,6 +114,7 @@ void loop() {
 		connectWifi();
 		return;
 	}
+	ota::loop();
 	remotelink::loop();
 	protocol::loop();
 }

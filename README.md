@@ -37,6 +37,7 @@ full repository layout.
 ```bash
 pio run -e nanoesp32-c6                 # build
 pio run -e nanoesp32-c6 -t upload       # flash real hardware
+pio run -e ota-<name> -t upload         # update a running bridge over WiFi (see below)
 pio device monitor -e nanoesp32-c6      # watch boot/serial output (needs a real interactive terminal)
 pio test -e native                      # host-native protocol-logic unit tests
 ```
@@ -50,6 +51,20 @@ resetting/powering on** - that's this chip's own UART-download-mode strap combin
 to reach application code with the button held (see `CLAUDE.md`'s "Known risks"). Once the portal
 is open, connect to the `BLE-Bridge-Setup` WiFi network and fill in the form at
 `http://192.168.4.1/`.
+
+## Over-the-air updates
+
+A bridge running OTA-capable firmware (2026-10-10 onwards; the first such build goes on over USB)
+listens for ArduinoOTA uploads on UDP 3232, advertised (mDNS) under its device name - the one set
+in the setup portal, or by default `ble-bridge-<last 6 MAC hex digits>`. The OTA password is
+always those 6 MAC characters, renamed or not (shown in the boot log's `[OTA] listening as ...`
+line). That keeps an upload from
+landing on the wrong bridge - it is not a secret (the MAC is visible on the WiFi). Copy
+`ota.local.ini.example` to the gitignored `ota.local.ini`, add one env per bridge (IP + its
+6 characters), and upload that env from
+VS Code's PlatformIO sidebar or with `pio run -e ota-<name> -t upload`. A failed upload leaves the
+running firmware untouched (two app slots). From Git Bash the upload step fails ("MSys/Mingw is
+not supported") - use PowerShell or VS Code's terminal.
 
 ## Wire protocol
 

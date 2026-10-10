@@ -1,4 +1,6 @@
 # Secrets - never commit real credentials. Copy include/secrets.h.example to include/secrets.h
+# Per-bridge OTA targets with their tokens (see ota.local.ini.example).
+ota*.local.ini
 # and fill in your own WiFi/server/token values there.
 include/secrets.h
 

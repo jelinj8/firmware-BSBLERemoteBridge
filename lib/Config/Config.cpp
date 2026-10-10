@@ -4,6 +4,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_mac.h>
 
 #include "BoardConfig.h"
 #include "Log.h"
@@ -24,6 +25,31 @@ constexpr const char* kNamespace = "blebridge";
 constexpr int kDnsPort = 53;
 }  // namespace
 
+String macSuffix() {
+	uint8_t mac[6];
+	esp_read_mac(mac, ESP_MAC_WIFI_STA);
+	char buf[7];
+	snprintf(buf, sizeof(buf), "%02X%02X%02X", mac[3], mac[4], mac[5]);
+	return String(buf);
+}
+
+String defaultDeviceName() {
+	return String(board::kNamePrefix) + macSuffix();
+}
+
+String hostName(const String& deviceName) {
+	String host;
+	for (size_t i = 0; i < deviceName.length(); i++) {
+		char c = deviceName[i];
+		host += isalnum(static_cast<unsigned char>(c)) ? c : '-';
+	}
+	return host;
+}
+
+String Values::effectiveDeviceName() const {
+	return deviceName.length() > 0 ? deviceName : defaultDeviceName();
+}
+
 Values load() {
 	Values v;
 	Preferences prefs;
@@ -35,6 +61,7 @@ Values load() {
 	v.bearerToken = prefs.getString("bearer_token", "");
 	bool hasTlsKey = prefs.isKey("tls_insecure");
 	v.tlsInsecure = prefs.getBool("tls_insecure", false);
+	v.deviceName = prefs.getString("device_name", "");
 	prefs.end();
 
 #if BLEBRIDGE_HAS_SECRETS
@@ -72,6 +99,7 @@ void save(const Values& v) {
 	prefs.putString("channel_name", v.channelName);
 	prefs.putString("bearer_token", v.bearerToken);
 	prefs.putBool("tls_insecure", v.tlsInsecure);
+	prefs.putString("device_name", v.deviceName);
 	prefs.end();
 }
 
@@ -96,6 +124,9 @@ void handleRoot() {
 			"<!DOCTYPE html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
 			"<title>BLE Bridge setup</title></head><body>"
 			"<h1>BLE Bridge setup</h1><form method=POST action='/save'>"
+			"<label>Device name (blank = default)<br><input name=device_name value='" +
+			htmlEscape(current.deviceName) + "' placeholder='" + htmlEscape(defaultDeviceName()) +
+			"'></label><br>"
 			"<label>WiFi SSID<br><input name=wifi_ssid value='" +
 			htmlEscape(current.wifiSsid) +
 			"'></label><br>"
@@ -140,6 +171,8 @@ void handleSave() {
 	String token = server_->arg("bearer_token");
 	pending_.bearerToken = token.length() > 0 ? token : existing.bearerToken;
 	pending_.tlsInsecure = server_->hasArg("tls_insecure");
+	pending_.deviceName = server_->arg("device_name");
+	pending_.deviceName.trim();
 	server_->send(200, "text/html", "<html><body><h1>Saved. Rebooting...</h1></body></html>");
 	submitted_ = true;
 }

@@ -80,8 +80,8 @@ void handleIncomingLine(const String& line) {
 
 }  // namespace
 
-void begin() {
-	blecentral::begin();
+void begin(const String& deviceName) {
+	blecentral::begin(deviceName);
 	remotelink::onText(handleIncomingLine);
 }
 

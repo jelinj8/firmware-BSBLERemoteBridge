@@ -255,9 +255,9 @@ ClientCallbacks clientCallbacks_;
 
 }  // namespace
 
-void begin() {
+void begin(const String& deviceName) {
 	eventMutex_ = xSemaphoreCreateMutex();
-	NimBLEDevice::init("");
+	NimBLEDevice::init(deviceName.c_str());
 	// Bonding + MITM protection + secure connections, keyboard-only IO capability so a peer's
 	// passkey request is answered programmatically (onPassKeyEntry/injectPassKey below) instead of
 	// prompting - no OS-level or physical UI involved, per the `pair` command's whole point.

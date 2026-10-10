@@ -22,11 +22,28 @@ struct Values {
 	String channelName;
 	String bearerToken;
 	bool tlsInsecure = false;
+	// Name the bridge goes by everywhere it shows one - DHCP and mDNS host name (via hostName()),
+	// BLE GAP device name; empty = defaultDeviceName().
+	String deviceName;
 
 	bool hasWifi() const {
 		return wifiSsid.length() > 0;
 	}
+
+	// deviceName, or defaultDeviceName() when it isn't set.
+	String effectiveDeviceName() const;
 };
+
+// Last 6 hex digits (uppercase) of the WiFi station MAC - readable before WiFi is started.
+String macSuffix();
+
+// board::kNamePrefix + macSuffix(), e.g. "ble-bridge-3851DC" (same convention as
+// firmware-BSHMIEinkDevice's default device name).
+String defaultDeviceName();
+
+// `deviceName` as a network host name (DHCP, mDNS): letters, digits and '-' only - anything else
+// becomes '-'.
+String hostName(const String& deviceName);
 
 // Loads persisted config from NVS, falling back to secrets.h's compile-time constants for any
 // field that has never been persisted (checked independently per field, not all-or-nothing).

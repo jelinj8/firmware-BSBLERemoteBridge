@@ -1,0 +1,18 @@
+; Copy to ota.local.ini (gitignored - the IPs are site-specific) and fill in: one env per deployed
+; bridge, uploaded over WiFi (PlatformIO sidebar -> the env -> Upload, or
+; `pio run -e ota-<name> -t upload`). The bridge must already run OTA-capable firmware (flashed once
+; over USB). The password is the last 6 characters of the bridge's default name
+; ble-bridge-XXXXXX, i.e. the last 6 hex digits of its WiFi MAC (uppercase), logged at boot as
+; "[OTA] listening as 'ble-bridge-XXXXXX'".
+
+[env:ota-esp32-bridge]
+extends = env:nanoesp32-c6-ota
+upload_port = 192.168.20.98
+upload_flags =
+	--auth=XXXXXX
+
+[env:ota-jjble]
+extends = env:nanoesp32-c6-ota
+upload_port = 192.168.20.131
+upload_flags =
+	--auth=XXXXXX

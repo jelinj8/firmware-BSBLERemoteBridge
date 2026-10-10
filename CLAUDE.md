@@ -43,6 +43,21 @@ principle (see `include/boards/board_template.h`), but this is the only board it
   specifically on HTTP 401 (matching `BleRemoteAuthException`'s contract on the Java side).
 - `lib/SessionControl/` — the `__ble_remote_control__` sentinel line format, mirroring
   `SessionControl.java` byte-for-byte.
+- `lib/Ota/` — ArduinoOTA (`espota`), started once WiFi is up. mDNS hostname = the device name
+  from the portal (`device_name` in NVS, `Values::effectiveDeviceName()`), or when unset the default
+  `config::defaultDeviceName()` = `board::kNamePrefix` + last 6 MAC hex digits
+  (`ble-bridge-3851DC`-style, same convention as firmware-BSHMIEinkDevice; read with `esp_read_mac`
+  so it works before WiFi is up, e.g. as the portal's placeholder). Password = those 6 MAC
+  characters whether renamed or not (the user's choice: it tells devices apart and matches the
+  default name; deliberately not a secret - the MAC is visible on the WiFi).
+  The same effective name (`config::hostName()`-sanitized where a host name is needed) is also the
+  DHCP host name (`WiFi.setHostname` before every `WiFi.mode`/`begin`; previously unset, so routers
+  saw `esp32c6-XXXXXX`) and the BLE GAP device name (`NimBLEDevice::init`, previously empty). Releases all BLE peripherals when an upload starts. The board's `default_16MB.csv` already has two 6.4MB app slots. Upload targets live in
+  the gitignored `ota.local.ini` (`extra_configs` glob in platformio.ini; template
+  `ota.local.ini.example`). Verified 2026-10-10 on both deployed bridges (.98 `esp32-bridge`, .131
+  `jjble`): listener up after a USB flash, a wrong password refused (espota tries PBKDF2-HMAC-SHA256,
+  then MD5), and a real network upload of the next build to both, which booted and reconnected.
+  The rename path (a `device_name` set in the portal) is built but not yet tried on hardware.
 - `lib/HexCodec/` — hex encode/decode matching `HexCodec.java`'s wire format and leniency
   contract; portable, exercised by the `native` test env (see below).
 - `lib/Config/` — persisted config (WiFi/server URL/channel name/token/TLS-insecure toggle) via

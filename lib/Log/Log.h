@@ -55,5 +55,14 @@ inline void cfg(const char* fmt, ...) {
 	Serial.println();
 }
 
+inline void ota(const char* fmt, ...) {
+	Serial.printf("[%10lu][OTA] ", millis());
+	va_list args;
+	va_start(args, fmt);
+	Serial.vprintf(fmt, args);
+	va_end(args);
+	Serial.println();
+}
+
 }  // namespace log
 }  // namespace blebridge

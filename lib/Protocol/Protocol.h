@@ -5,12 +5,14 @@
 // session_reset/session_ready sentinel this layer special-cases.
 #pragma once
 
+#include <Arduino.h>
+
 namespace blebridge {
 namespace protocol {
 
-// Initializes BleCentral and registers this module's incoming-line handler with RemoteLink. Call
-// once, after remotelink::begin().
-void begin();
+// Initializes BleCentral (under `deviceName`) and registers this module's incoming-line handler
+// with RemoteLink. Call once, after remotelink::begin().
+void begin(const String& deviceName);
 
 // Drains BleCentral's queued events/deferred responses and sends each over RemoteLink. Call every
 // main-loop iteration.

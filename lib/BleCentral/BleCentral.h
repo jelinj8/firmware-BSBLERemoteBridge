@@ -26,8 +26,9 @@ using EventEmitter = std::function<void(const String&)>;
 
 // Initializes the NimBLE stack in central role and configures pairing (bonding + MITM + secure
 // connections, keyboard-only IO capability so a `pair` command's PIN is supplied programmatically
-// via NimBLEDevice::injectPassKey rather than surfacing any prompt). Call once at boot.
-void begin();
+// via NimBLEDevice::injectPassKey rather than surfacing any prompt), under `deviceName` as the
+// GAP device name a connected peripheral can read. Call once at boot.
+void begin(const String& deviceName);
 
 // Drains events queued from NimBLE's own host-task callbacks (device_found, connected,
 // disconnected, notification, plus the deferred scan/pair responses) and calls `emit` once per
